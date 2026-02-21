@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova Halo</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overflow: hidden; height: 100vh; }
+canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
+
+.reference {
+  position: fixed; top: 20px; left: 20px; z-index: 10;
+  font-size: 12px; color: #888;
+}
+.reference h2 { color: #4f4; font-size: 16px; margin: 4px 0; font-weight: 600; }
+.reference p { max-width: 280px; line-height: 1.4; font-size: 11px; color: #777; }
+
+.controls {
+  position: fixed; top: 50%; right: 24px; transform: translateY(-50%);
+  background: rgba(30,30,30,0.85); backdrop-filter: blur(12px);
+  border-radius: 16px; padding: 24px; width: 280px; z-index: 10;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.controls h3 { font-size: 16px; margin-bottom: 16px; font-weight: 600; }
+.section-label { font-size: 10px; letter-spacing: 1.5px; color: #888; margin: 16px 0 8px; font-weight: 600; }
+
+.palettes { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.palette {
+  width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+  border: 2px solid transparent; transition: border-color 0.2s, transform 0.15s;
+}
+.palette:hover { transform: scale(1.15); }
+.palette.active { border-color: #fff; }
+
+.color-row {
+  display: flex; align-items: center; gap: 10px; margin: 8px 0;
+}
+.color-swatch {
+  width: 28px; height: 28px; border-radius: 6px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.15); position: relative;
+}
+.color-swatch input[type="color"] {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer;
+}
+.color-label { font-size: 12px; color: #aaa; flex: 1; }
+.color-label span { display: block; font-size: 11px; color: #666; margin-top: 2px; }
+
+.param-row { margin: 10px 0; }
+.param-row label { font-size: 12px; color: #aaa; display: flex; justify-content: space-between; }
+.param-row label span { color: #4dd; font-size: 11px; }
+.param-row input[type="range"] {
+  width: 100%; margin-top: 4px; -webkit-appearance: none; appearance: none;
+  height: 4px; background: rgba(255,255,255,0.12); border-radius: 2px; outline: none;
+}
+.param-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+  background: #4dd; cursor: pointer; border: 2px solid #222;
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div class="reference">
+  <div style="color:#888;font-size:11px;">Reference</div>
+  <h2>Nova Halo</h2>
+  <p>WebGL ring effect with 4-layer composition, simplex noise edge breathing, and orbiting highlight. Ported from Framer AI halo-glow component.</p>
+</div>
+
+<div class="controls">
+  <h3>Controls</h3>
+  <div class="section-label">PALETTES</div>
+  <div class="palettes" id="palettes"></div>
+
+  <div class="section-label">COLORS</div>
+  <div id="colorControls"></div>
+
+  <div class="section-label">PARAMETERS</div>
+  <div id="paramControls"></div>
+</div>
+
+<script>
+// ---- Config ----
+const palettes = [
+  { a: '#3366ff', b: '#00ccff', c: '#0a1a3a' },
+  { a: '#00cc66', b: '#ffcc00', c: '#0a2a1a' },
+  { a: '#ff3366', b: '#ff9933', c: '#2a0a1a' },
+  { a: '#ff33cc', b: '#ff6699', c: '#2a0a2a' },
+  { a: '#9933ff', b: '#3366ff', c: '#1a0a2a' },
+  { a: '#ffd700', b: '#9400d3', c: '#260d33' },
+  { a: '#ff6600', b: '#ff0066', c: '#2a1a0a' },
+  { a: '#00ffcc', b: '#00ff66', c: '#0a2a2a' },
+  { a: '#00ccff', b: '#ffffff', c: '#0a1a2a' },
+  { a: '#ffffff', b: '#cccccc', c: '#1a1a1a' },
+];
+
+let colors = { a: '#ffd700', b: '#9400d3', c: '#260d33' };
+let params = {
+  hueShift: 0, edgeDensity: 263, flowSpeed: 0.66,
+  breathing: 0.56, hoverDistortion: 0.30, noiseScale: 0.26
+};
+let mouse = { x: 0.5, y: 0.5 };
+let activePalette = 5;
+
+// ---- Palette UI ----
+const palDiv = document.getElementById('palettes');
+palettes.forEach((p, i) => {
+  const el = document.createElement('div');
+  el.className = 'palette' + (i === activePalette ? ' active' : '');
+  el.style.background = `linear-gradient(135deg, ${p.a}, ${p.b})`;
+  el.onclick = () => {
+    colors = { ...p };
+    activePalette = i;
+    document.querySelectorAll('.palette').forEach((e, j) => e.classList.toggle('active', j === i));
+    updateColorUI();
+  };
+  palDiv.appendChild(el);
+});
+
+// ---- Color UI ----
+const colorDefs = [
+  { key: 'a', label: 'Color A (Primary)' },
+  { key: 'b', label: 'Color B (Secondary)' },
+  { key: 'c', label: 'Color C (Shadow)' },
+];
+const colorDiv = document.getElementById('colorControls');
+function updateColorUI() {
+  colorDiv.innerHTML = '';
+  colorDefs.forEach(d => {
+    const row = document.createElement('div');
+    row.className = 'color-row';
+    row.innerHTML = `
+      <div class="color-swatch" style="background:${colors[d.key]}">
+        <input type="color" value="${colors[d.key]}" data-key="${d.key}">
+      </div>
+      <div class="color-label">${d.label}<span>${colors[d.key]}</span></div>
+    `;
+    row.querySelector('input').addEventListener('input', e => {
+      colors[d.key] = e.target.value;
+      updateColorUI();
+    });
+    colorDiv.appendChild(row);
+  });
+}
+updateColorUI();
+
+// ---- Param UI ----
+const paramDefs = [
+  { key: 'hueShift', label: 'Hue Shift', min: 0, max: 360, step: 1 },
+  { key: 'edgeDensity', label: 'Edge Density', min: 0, max: 500, step: 1 },
+  { key: 'flowSpeed', label: 'Flow Speed', min: 0, max: 2, step: 0.01 },
+  { key: 'breathing', label: 'Breathing', min: 0, max: 1, step: 0.01 },
+  { key: 'hoverDistortion', label: 'Hover Distortion', min: 0, max: 1, step: 0.01 },
+  { key: 'noiseScale', label: 'Noise Scale', min: 0, max: 1, step: 0.01 },
+];
+const paramDiv = document.getElementById('paramControls');
+paramDefs.forEach(d => {
+  const row = document.createElement('div');
+  row.className = 'param-row';
+  row.innerHTML = `
+    <label>${d.label} <span id="v_${d.key}">${params[d.key]}</span></label>
+    <input type="range" min="${d.min}" max="${d.max}" step="${d.step}" value="${params[d.key]}" data-key="${d.key}">
+  `;
+  row.querySelector('input').addEventListener('input', e => {
+    params[d.key] = parseFloat(e.target.value);
+    document.getElementById('v_' + d.key).textContent = params[d.key];
+  });
+  paramDiv.appendChild(row);
+});
+
+// ---- Mouse ----
+document.addEventListener('mousemove', e => {
+  mouse.x = e.clientX / window.innerWidth;
+  mouse.y = e.clientY / window.innerHeight;
+});
+
+// ---- WebGL ----
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl');
+
+function resize() {
+  canvas.width = window.innerWidth * devicePixelRatio;
+  canvas.height = window.innerHeight * devicePixelRatio;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener('resize', resize);
+resize();
+
+const vsrc = `attribute vec2 p;void main(){gl_Position=vec4(p,0,1);}`;
+const fsrc = `
+precision highp float;
+uniform vec2 u_res;
+uniform float u_time;
+uniform vec2 u_mouse;
+uniform vec3 u_colA, u_colB, u_colC;
+uniform float u_hueShift, u_edgeDensity, u_flowSpeed, u_breathing, u_hoverDist, u_noiseScale;
+
+// Simplex 2D noise
+vec3 mod289(vec3 x){return x-floor(x*(1./289.))*289.;}
+vec2 mod289(vec2 x){return x-floor(x*(1./289.))*289.;}
+vec3 permute(vec3 x){return mod289(((x*34.)+1.)*x);}
+float snoise(vec2 v){
+  const vec4 C=vec4(.211324865405187,.366025403784439,-.577350269189626,.024390243902439);
+  vec2 i=floor(v+dot(v,C.yy)),x0=v-i+dot(i,C.xx),i1;
+  i1=(x0.x>x0.y)?vec2(1,0):vec2(0,1);
+  vec4 x12=x0.xyxy+C.xxzz;x12.xy-=i1;
+  i=mod289(i);
+  vec3 p=permute(permute(i.y+vec3(0,i1.y,1.))+i.x+vec3(0,i1.x,1.));
+  vec3 m=max(.5-vec3(dot(x0,x0),dot(x12.xy,x12.xy),dot(x12.zw,x12.zw)),0.);
+  m=m*m;m=m*m;
+  vec3 x=2.*fract(p*C.www)-1.,h=abs(x)-.5,ox=floor(x+.5),a0=x-ox;
+  m*=1.79284291400159-.85373472095314*(a0*a0+h*h);
+  vec3 g;g.x=a0.x*x0.x+h.x*x0.y;g.yz=a0.yz*x12.xz+h.yz*x12.yw;
+  return 130.*dot(m,g);
+}
+
+vec3 hueRotate(vec3 c, float a) {
+  float s = sin(a), co = cos(a);
+  mat3 m = mat3(
+    0.299+0.701*co+0.168*s, 0.587-0.587*co+0.330*s, 0.114-0.114*co-0.497*s,
+    0.299-0.299*co-0.328*s, 0.587+0.413*co+0.035*s, 0.114-0.114*co+0.292*s,
+    0.299-0.300*co+1.25*s,  0.587-0.588*co-1.05*s,  0.114+0.886*co-0.203*s
+  );
+  return m * c;
+}
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / u_res;
+  vec2 p = (uv - 0.5) * vec2(u_res.x/u_res.y, 1.0);
+  float dist = length(p);
+  float angle = atan(p.y, p.x);
+
+  // Ring params
+  float ringRadius = 0.28;
+  float ringWidth = 0.035;
+
+  // Noise breathing
+  float n1 = snoise(vec2(angle * u_noiseScale * 3.0, u_time * u_flowSpeed)) * u_breathing * 0.04;
+  float n2 = snoise(vec2(angle * u_noiseScale * 6.0 + 100.0, u_time * u_flowSpeed * 1.5)) * u_breathing * 0.02;
+  float n3 = snoise(vec2(angle * u_edgeDensity * 0.01, u_time * u_flowSpeed * 0.7 + 50.0)) * 0.015;
+
+  float modRadius = ringRadius + n1 + n2 + n3;
+  float ringDist = abs(dist - modRadius);
+
+  // Mouse hover distortion
+  vec2 mp = (u_mouse - 0.5) * vec2(u_res.x/u_res.y, 1.0);
+  float mouseDist = length(p - mp);
+  float hover = smoothstep(0.3, 0.0, mouseDist) * u_hoverDist * 0.08;
+  ringDist -= hover;
+
+  // 4 layers
+  float layer1 = smoothstep(ringWidth * 1.5, 0.0, ringDist);
+  float layer2 = smoothstep(ringWidth * 3.0, 0.0, ringDist) * 0.5;
+  float layer3 = smoothstep(ringWidth * 6.0, 0.0, ringDist) * 0.2;
+  float layer4 = smoothstep(ringWidth * 12.0, 0.0, ringDist) * 0.08;
+
+  float ring = layer1 + layer2 + layer3 + layer4;
+
+  // Orbiting highlight
+  float orbitAngle = u_time * 0.8;
+  vec2 orbitPos = modRadius * vec2(cos(orbitAngle), sin(orbitAngle));
+  float highlight = smoothstep(0.08, 0.0, length(p - orbitPos)) * 1.5;
+
+  // Color mix
+  float colorMix = sin(angle * 2.0 + u_time * u_flowSpeed) * 0.5 + 0.5;
+  vec3 ringColor = mix(u_colA, u_colB, colorMix);
+  ringColor = mix(u_colC, ringColor, ring);
+  ringColor += highlight * mix(u_colA, vec3(1.0), 0.5);
+
+  // Hue shift
+  ringColor = hueRotate(ringColor, u_hueShift * 3.14159 / 180.0);
+
+  // Background
+  vec3 bg = u_colC * 0.15;
+  vec3 col = mix(bg, ringColor, ring + highlight * 0.3);
+
+  // Vignette
+  col *= 1.0 - 0.3 * length(uv - 0.5);
+
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+  return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, vsrc));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fsrc));
+gl.linkProgram(prog);
+gl.useProgram(prog);
+
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+const pLoc = gl.getAttribLocation(prog, 'p');
+gl.enableVertexAttribArray(pLoc);
+gl.vertexAttribPointer(pLoc, 2, gl.FLOAT, false, 0, 0);
+
+const loc = name => gl.getUniformLocation(prog, name);
+
+function hexToGL(hex) {
+  const r = parseInt(hex.slice(1,3),16)/255;
+  const g = parseInt(hex.slice(3,5),16)/255;
+  const b = parseInt(hex.slice(5,7),16)/255;
+  return [r, g, b];
+}
+
+function render(t) {
+  t *= 0.001;
+  gl.uniform2f(loc('u_res'), canvas.width, canvas.height);
+  gl.uniform1f(loc('u_time'), t);
+  gl.uniform2f(loc('u_mouse'), mouse.x, 1.0 - mouse.y);
+  const a = hexToGL(colors.a), b = hexToGL(colors.b), c = hexToGL(colors.c);
+  gl.uniform3f(loc('u_colA'), a[0], a[1], a[2]);
+  gl.uniform3f(loc('u_colB'), b[0], b[1], b[2]);
+  gl.uniform3f(loc('u_colC'), c[0], c[1], c[2]);
+  gl.uniform1f(loc('u_hueShift'), params.hueShift);
+  gl.uniform1f(loc('u_edgeDensity'), params.edgeDensity);
+  gl.uniform1f(loc('u_flowSpeed'), params.flowSpeed);
+  gl.uniform1f(loc('u_breathing'), params.breathing);
+  gl.uniform1f(loc('u_hoverDist'), params.hoverDistortion);
+  gl.uniform1f(loc('u_noiseScale'), params.noiseScale);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
